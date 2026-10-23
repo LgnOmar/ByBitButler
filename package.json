@@ -1,0 +1,18 @@
+{
+  "name": "bybit-butler",
+  "version": "1.0.0",
+  "description": "Desk-free mobile Bybit P2P command desk via Telegram Bot",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test:bybit": "node src/testBybit.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "node-telegram-bot-api": "^0.66.0",
+    "xcap": "file:../xCap"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "autoRepriceEnabled": false,
+  "targetAdId": "2113267925914439680",
+  "minFloorPrice": 255,
+  "undercutBuffer": 0.01,
+  "referenceAmount": "5000",
+  "refreshIntervalMs": 5000,
+  "lastTargetPrice": null,
+  "lastCompetitorPrice": null,
+  "lastCheckTime": null,
+  "lastAction": "Engine initialized in standby mode"
+}
