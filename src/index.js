@@ -1,5 +1,6 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
+import axios from 'axios';
 import { bot, getMainMenuKeyboard, sendAdminAlert } from './telegramBot.js';
 import { startOrderWatcher } from './orderWatcher.js';
 import { startPricingEngine } from './pricingEngine.js';
@@ -35,14 +36,34 @@ console.log('   - Min Floor Price:', cfg.minFloorPrice, 'DZD');
 console.log('   - Quantity Filter:', cfg.referenceAmount ? (cfg.referenceAmount + ' DZD') : 'None');
 console.log('   - Refresh Rate:', (cfg.refreshIntervalMs / 1000) + 's');
 
-// 1. Start background order listener (every 4s)
-startOrderWatcher(4000);
+// 1. Detect Host Public Outbound IP
+async function detectOutboundIp() {
+  try {
+    const res = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
+    const ip = res.data?.ip;
+    console.log('========================================');
+    console.log('📡 HOST PUBLIC OUTBOUND IP:', ip);
+    console.log('========================================');
+    return ip;
+  } catch (err) {
+    console.warn('[IP Detection Warning] Could not fetch public IP:', err.message);
+    return null;
+  }
+}
 
-// 2. Start dynamic auto-pricing engine (every 5s)
+// 2. Start background services
+startOrderWatcher(4000);
 startPricingEngine(cfg.refreshIntervalMs || 5000);
 
-// 3. Send startup notification
-sendAdminAlert('🎩 <b>ByBit Butler is ONLINE!</b>\n━━━━━━━━━━━━━━━━━━━━\n⚡ <i>Phase 1: Dynamic Auto-Pricing Engine Active</i>\n• Refresh Rate: <b>5 seconds</b>\n• Quantity Filter: <b>' + (cfg.referenceAmount || 'Any') + ' DZD</b>\n• Min Floor: <b>' + cfg.minFloorPrice.toFixed(2) + ' DZD</b>\n\nTap below for controls:', getMainMenuKeyboard()).then(() => {
+// 3. Send startup notification with Host IP
+detectOutboundIp().then(async (hostIp) => {
+  const ipText = hostIp 
+    ? `🌐 <b>Host Server IP</b>: <code>${hostIp}</code>\n👉 <i>Verify this IP is added to your Bybit API Key whitelist!</i>\n\n`
+    : '';
+
+  const startupMsg = `🎩 <b>ByBit Butler is ONLINE!</b>\n━━━━━━━━━━━━━━━━━━━━\n${ipText}⚡ <b>Phase 1: Dynamic Auto-Pricing Engine Active</b>\n• Refresh Rate: <b>5s</b>\n• Quantity Filter: <b>${cfg.referenceAmount || 'Any'} DZD</b>\n• Min Floor: <b>${cfg.minFloorPrice.toFixed(2)} DZD</b>\n\nTap below for controls:`;
+
+  await sendAdminAlert(startupMsg, getMainMenuKeyboard());
   console.log('✅ Startup push notification delivered to Telegram.');
 }).catch((err) => {
   console.log('ℹ️ Waiting for initial chat activation.');
