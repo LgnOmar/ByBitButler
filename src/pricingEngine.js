@@ -19,48 +19,7 @@ export async function evaluateAndReprice() {
     const targetAdId = String(config.targetAdId);
     const amountFilter = config.referenceAmount;
 
-    // 1. Fetch live market depth for target quantity
-    const depthRes = await Bybit.getOnlineAds('DZD', 'USDT', '1', '1', '10', amountFilter);
-    if (!depthRes || (depthRes.ret_code !== 0 && depthRes.retCode !== 0)) {
-      if (depthRes?.ret_code === 10006) {
-        console.warn('[Pricing Engine] Rate limit hit. Backing off for 15s.');
-        await new Promise(r => setTimeout(r, 15000));
-      }
-      isEvaluating = false;
-      return;
-    }
-
-    const items = depthRes.result?.items || [];
-    
-    // 2. Filter out own ad
-    const competitors = items.filter(item => String(item.id) !== targetAdId && String(item.itemId) !== targetAdId);
-
-    if (competitors.length === 0) {
-      updateConfig({
-        lastCheckTime: new Date().toLocaleTimeString(),
-        lastAction: 'No competitors found for quantity ' + (amountFilter || 'any') + ' DZD'
-      });
-      isEvaluating = false;
-      return;
-    }
-
-    // 3. Find lowest competitor price
-    const topCompetitor = competitors[0];
-    const compPrice = parseFloat(topCompetitor.price);
-    const buffer = parseFloat(config.undercutBuffer) || 0.01;
-    const floor = parseFloat(config.minFloorPrice) || 250.00;
-
-    // 4. Calculate target price
-    let targetPrice = parseFloat((compPrice - buffer).toFixed(2));
-    let isHeldAtFloor = false;
-
-    // 5. Hard Floor Constraint Enforcement
-    if (targetPrice < floor) {
-      targetPrice = floor;
-      isHeldAtFloor = true;
-    }
-
-    // 6. Check current live ad price on Bybit
+    // 1. Fetch personal ad FIRST to verify it exists and is LIVE
     const myAdsRes = await Bybit.getMyAds('DZD', 'USDT');
     const myAd = myAdsRes.result?.items?.find(a => String(a.id) === targetAdId || String(a.itemId) === targetAdId);
     if (!myAd) {
@@ -69,14 +28,71 @@ export async function evaluateAndReprice() {
         lastCheckTime: new Date().toLocaleTimeString(),
         lastAction: `Target ad #${targetAdId} not found on Bybit`
       });
-      isEvaluating = false;
       return;
+    }
+
+    // 2. Strict Ad Online Guard
+    // Ad must have status 10 (Online), isOnline true, and showStatus 'ONLINE'
+    const isLive = myAd.status === 10 && myAd.isOnline === true && myAd.showStatus === 'ONLINE';
+    if (!isLive) {
+      const reason = myAd.hiddenReason ? ` (${myAd.hiddenReason})` : '';
+      const statusDesc = myAd.showStatus || (myAd.status === 20 ? 'OFFLINE' : 'INACTIVE');
+      const standbyMsg = `Ad #${targetAdId} is ${statusDesc}${reason}. Engine in standby.`;
+
+      if (config.lastAction !== standbyMsg) {
+        console.log(`[Pricing Engine] ⏸️ ${standbyMsg}`);
+      }
+
+      updateConfig({
+        lastCheckTime: new Date().toLocaleTimeString(),
+        lastAction: standbyMsg
+      });
+      return;
+    }
+
+    // 3. Fetch live market depth for target quantity (ONLY when ad is verified online)
+    const depthRes = await Bybit.getOnlineAds('DZD', 'USDT', '1', '1', '10', amountFilter);
+    if (!depthRes || (depthRes.ret_code !== 0 && depthRes.retCode !== 0)) {
+      if (depthRes?.ret_code === 10006) {
+        console.warn('[Pricing Engine] Rate limit hit. Backing off for 15s.');
+        await new Promise(r => setTimeout(r, 15000));
+      }
+      return;
+    }
+
+    const items = depthRes.result?.items || [];
+    
+    // 4. Filter out own ad
+    const competitors = items.filter(item => String(item.id) !== targetAdId && String(item.itemId) !== targetAdId);
+
+    if (competitors.length === 0) {
+      updateConfig({
+        lastCheckTime: new Date().toLocaleTimeString(),
+        lastAction: 'No competitors found for quantity ' + (amountFilter || 'any') + ' DZD'
+      });
+      return;
+    }
+
+    // 5. Find lowest competitor price
+    const topCompetitor = competitors[0];
+    const compPrice = parseFloat(topCompetitor.price);
+    const buffer = parseFloat(config.undercutBuffer) || 0.01;
+    const floor = parseFloat(config.minFloorPrice) || 250.00;
+
+    // 6. Calculate target price
+    let targetPrice = parseFloat((compPrice - buffer).toFixed(2));
+    let isHeldAtFloor = false;
+
+    // 7. Hard Floor Constraint Enforcement
+    if (targetPrice < floor) {
+      targetPrice = floor;
+      isHeldAtFloor = true;
     }
 
     const currentLivePrice = parseFloat(myAd.price);
     const priceChanged = Math.abs(targetPrice - currentLivePrice) >= 0.01;
 
-    // 7. Update Ad if price needs adjustment
+    // 8. Update Ad if price needs adjustment
     if (priceChanged) {
       console.log(`[Pricing Engine] Updating ad ${targetAdId} from ${currentLivePrice.toFixed(2)} to ${targetPrice.toFixed(2)} DZD (Comp: ${compPrice.toFixed(2)} DZD | Floor: ${floor.toFixed(2)} DZD)`);
       

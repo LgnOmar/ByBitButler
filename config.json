@@ -7,6 +7,6 @@
   "refreshIntervalMs": 10000,
   "lastTargetPrice": null,
   "lastCompetitorPrice": null,
-  "lastCheckTime": null,
-  "lastAction": "Engine initialized with safe rate-limiting"
+  "lastCheckTime": "12:11:26 AM",
+  "lastAction": "Ad #2113267925914439680 is HIDDEN (ITEM_OWN_LIMIT). Engine in standby."
 }
