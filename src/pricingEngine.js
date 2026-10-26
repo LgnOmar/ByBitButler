@@ -60,24 +60,29 @@ export async function evaluateAndReprice() {
       isHeldAtFloor = true;
     }
 
-    // 6. Check current ad price
-    if (!lastKnownPrice) {
-      const myAdsRes = await Bybit.getMyAds('DZD', 'USDT');
-      const myAd = myAdsRes.result?.items?.find(a => String(a.id) === targetAdId);
-      if (myAd) {
-        lastKnownPrice = parseFloat(myAd.price);
-      }
+    // 6. Check current live ad price on Bybit
+    const myAdsRes = await Bybit.getMyAds('DZD', 'USDT');
+    const myAd = myAdsRes.result?.items?.find(a => String(a.id) === targetAdId || String(a.itemId) === targetAdId);
+    if (!myAd) {
+      console.warn(`[Pricing Engine] Target ad #${targetAdId} not found in your personal Bybit ads.`);
+      updateConfig({
+        lastCheckTime: new Date().toLocaleTimeString(),
+        lastAction: `Target ad #${targetAdId} not found on Bybit`
+      });
+      isEvaluating = false;
+      return;
     }
 
-    const priceChanged = !lastKnownPrice || Math.abs(targetPrice - lastKnownPrice) >= 0.01;
+    const currentLivePrice = parseFloat(myAd.price);
+    const priceChanged = Math.abs(targetPrice - currentLivePrice) >= 0.01;
 
     // 7. Update Ad if price needs adjustment
     if (priceChanged) {
-      console.log(`[Pricing Engine] Updating ad ${targetAdId} from ${lastKnownPrice} to ${targetPrice} DZD (Comp: ${compPrice} DZD | Floor: ${floor} DZD)`);
+      console.log(`[Pricing Engine] Updating ad ${targetAdId} from ${currentLivePrice.toFixed(2)} to ${targetPrice.toFixed(2)} DZD (Comp: ${compPrice.toFixed(2)} DZD | Floor: ${floor.toFixed(2)} DZD)`);
       
-      const updateRes = await Bybit.updateAdPrice(targetAdId, targetPrice);
-      if (updateRes.ret_code === 0 || updateRes.retCode === 0) {
-        const oldPrice = lastKnownPrice;
+      const updateRes = await Bybit.updateAdPrice(targetAdId, targetPrice, myAd);
+      if (updateRes && (updateRes.ret_code === 0 || updateRes.retCode === 0)) {
+        const oldPrice = currentLivePrice;
         lastKnownPrice = targetPrice;
 
         const actionText = isHeldAtFloor
@@ -94,13 +99,18 @@ export async function evaluateAndReprice() {
         // Notify user via Telegram
         let alertMsg = '';
         if (isHeldAtFloor) {
-          alertMsg = '⚠️ <b>AUTO-PRICING: HELD AT FLOOR</b>\n━━━━━━━━━━━━━━━━━━━━\n• <b>Your Price</b>: <b>' + targetPrice.toFixed(2) + ' DZD</b> (Min Floor)\n• <b>Competitor</b>: ' + compPrice.toFixed(2) + ' DZD (' + (topCompetitor.nickName || 'Merchant') + ')\n• <b>Quantity Filter</b>: ' + (amountFilter || 'Any') + ' DZD\n━━━━━━━━━━━━━━━━━━━━\n<i>Butler will never sell below your floor.</i>';
+          alertMsg = '⚠️ <b>AUTO-PRICING: HELD AT FLOOR</b>\n━━━━━━━━━━━━━━━━━━━━\n• <b>Your Price</b>: <b>' + targetPrice.toFixed(2) + ' DZD</b> (Min Floor)\n• <b>Competitor</b>: ' + compPrice.toFixed(2) + ' DZD (' + (topCompetitor.nickName || 'Merchant') + ')\n• <b>Quantity Filter</b>: ' + (amountFilter ? amountFilter + ' DZD' : 'Any Volume') + '\n━━━━━━━━━━━━━━━━━━━━\n<i>Butler will never sell below your floor.</i>';
         } else {
-          alertMsg = '⚡ <b>AD AUTO-REPRICED TO #1 RANK</b>\n━━━━━━━━━━━━━━━━━━━━\n• <b>New Price</b>: <b>' + targetPrice.toFixed(2) + ' DZD</b>\n• <b>Old Price</b>: ' + (oldPrice ? oldPrice.toFixed(2) : 'N/A') + ' DZD\n• <b>Competitor</b>: ' + compPrice.toFixed(2) + ' DZD (' + (topCompetitor.nickName || 'Merchant') + ')\n• <b>Quantity Filter</b>: ' + (amountFilter || 'Any') + ' DZD\n━━━━━━━━━━━━━━━━━━━━\n<i>Maintained #1 position dynamically.</i>';
+          alertMsg = '⚡ <b>AD AUTO-REPRICED TO #1 RANK</b>\n━━━━━━━━━━━━━━━━━━━━\n• <b>New Price</b>: <b>' + targetPrice.toFixed(2) + ' DZD</b>\n• <b>Old Price</b>: ' + oldPrice.toFixed(2) + ' DZD\n• <b>Competitor</b>: ' + compPrice.toFixed(2) + ' DZD (' + (topCompetitor.nickName || 'Merchant') + ')\n• <b>Quantity Filter</b>: ' + (amountFilter ? amountFilter + ' DZD' : 'Any Volume') + '\n━━━━━━━━━━━━━━━━━━━━\n<i>Maintained #1 position dynamically on Bybit.</i>';
         }
         await sendAdminAlert(alertMsg);
       } else {
-        console.error('[Pricing Engine] Failed to update price:', updateRes.ret_msg || updateRes.retMsg);
+        const errMsg = updateRes?.ret_msg || updateRes?.retMsg || 'Unknown Bybit error';
+        console.error('[Pricing Engine] Bybit refused price update:', errMsg);
+        updateConfig({
+          lastCheckTime: new Date().toLocaleTimeString(),
+          lastAction: `Failed to update Bybit ad: ${errMsg}`
+        });
       }
     } else {
       updateConfig({
@@ -114,7 +124,11 @@ export async function evaluateAndReprice() {
   } catch (err) {
     consecutiveErrors++;
     console.error('[Pricing Engine Error]', err.message);
-    if (consecutiveErrors === 5) {
+    if (err.message && err.message.includes('Unmatched IP')) {
+      if (consecutiveErrors === 1 || consecutiveErrors % 10 === 0) {
+        await sendAdminAlert('⛔ <b>Bybit IP Whitelist Error</b>: Bybit rejected request with code 10010 (Unmatched IP). Please check your API key bound IP addresses.');
+      }
+    } else if (consecutiveErrors === 5) {
       await sendAdminAlert('⚠️ <b>Pricing Engine Warning</b>: Encountered repeated errors: ' + err.message);
     }
   } finally {

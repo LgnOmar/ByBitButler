@@ -51,9 +51,9 @@ async function detectOutboundIp() {
   }
 }
 
-// 2. Start background services
-startOrderWatcher(4000);
-startPricingEngine(cfg.refreshIntervalMs || 5000);
+// 2. Start background services (spaced to prevent rate-limit exhaustion)
+startOrderWatcher(8000);
+startPricingEngine(cfg.refreshIntervalMs || 10000);
 
 // 3. Send startup notification with Host IP
 detectOutboundIp().then(async (hostIp) => {

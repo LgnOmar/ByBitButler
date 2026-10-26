@@ -3,10 +3,10 @@
   "targetAdId": "2113267925914439680",
   "minFloorPrice": 255,
   "undercutBuffer": 0.01,
-  "referenceAmount": "5000",
-  "refreshIntervalMs": 5000,
+  "referenceAmount": "777",
+  "refreshIntervalMs": 10000,
   "lastTargetPrice": null,
   "lastCompetitorPrice": null,
   "lastCheckTime": null,
-  "lastAction": "Engine initialized in standby mode"
+  "lastAction": "Engine initialized with safe rate-limiting"
 }

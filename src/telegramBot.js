@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import TelegramBot from 'node-telegram-bot-api';
 import { Bybit } from './bybitClient.js';
 import { loadConfig, updateConfig } from './configManager.js';
+import { evaluateAndReprice } from './pricingEngine.js';
 import dotenv from 'dotenv';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +26,7 @@ function isAuthorized(msg) {
 export function getMainMenuKeyboard() {
   const cfg = loadConfig();
   const autoStatusText = cfg.autoRepriceEnabled ? '🤖 Auto-Reprice: ON 🟢' : '🤖 Auto-Reprice: OFF 🔴';
+  const bracketText = '💰 Bracket: ' + (cfg.referenceAmount ? cfg.referenceAmount + ' DZD' : 'All Volumes');
 
   return {
     inline_keyboard: [
@@ -34,17 +36,75 @@ export function getMainMenuKeyboard() {
       ],
       [
         { text: autoStatusText, callback_data: 'btn_toggle_autoprice' },
-        { text: '⚙️ Pricing Config', callback_data: 'btn_pricing_info' }
+        { text: bracketText, callback_data: 'btn_brackets_menu' }
       ],
       [
         { text: '📊 Full Status', callback_data: 'btn_status' },
-        { text: '📋 Active Orders', callback_data: 'btn_orders' }
+        { text: '⚙️ Pricing Config', callback_data: 'btn_pricing_info' }
       ],
       [
-        { text: '🛑 EMERGENCY PAUSE ALL ADS', callback_data: 'btn_emergency_stop_all' }
+        { text: '📋 Active Orders', callback_data: 'btn_orders' },
+        { text: '🛑 Emergency Stop', callback_data: 'btn_emergency_stop_all' }
       ]
     ]
   };
+}
+
+export function getBracketKeyboard() {
+  const cfg = loadConfig();
+  const current = cfg.referenceAmount;
+
+  const brackets = [
+    { label: '500 DZD', val: '500' },
+    { label: '1,000 DZD', val: '1000' },
+    { label: '2,000 DZD', val: '2000' },
+    { label: '5,000 DZD', val: '5000' },
+    { label: '10,000 DZD', val: '10000' },
+    { label: '20,000 DZD', val: '20000' },
+    { label: 'All Volumes', val: '0' }
+  ];
+
+  const rows = [];
+  let currentRow = [];
+  brackets.forEach(b => {
+    const isSelected = (b.val === '0' && !current) || (current === b.val);
+    const text = isSelected ? `✅ ${b.label}` : b.label;
+    currentRow.push({ text, callback_data: `set_bracket_${b.val}` });
+    if (currentRow.length === 2) {
+      rows.push(currentRow);
+      currentRow = [];
+    }
+  });
+  if (currentRow.length > 0) rows.push(currentRow);
+
+  rows.push([
+    { text: '📈 View Depth for this Bracket', callback_data: 'btn_depth' }
+  ]);
+  rows.push([
+    { text: '🔙 Main Menu', callback_data: 'btn_menu' }
+  ]);
+
+  return { inline_keyboard: rows };
+}
+
+export async function handleBracketMenu(chatId, messageId = null) {
+  const cfg = loadConfig();
+  const currentText = cfg.referenceAmount ? `<b>${cfg.referenceAmount} DZD</b>` : '<b>All Volumes (Unfiltered)</b>';
+
+  const text = '💰 <b>SELECT TICKET BRACKET</b>\n━━━━━━━━━━━━━━━━━━━━\n' +
+    'Active Competitor Bracket: ' + currentText + '\n\n' +
+    '<i>In Bybit P2P, buyer search depth and clearing prices depend heavily on ticket size. ' +
+    'Select the bracket matching the order size you want to capture:</i>\n━━━━━━━━━━━━━━━━━━━━\n' +
+    '💡 <i>Or type <code>/setamount &lt;amount&gt;</code> for any custom amount.</i>';
+
+  if (messageId) {
+    await safeEditMessage(text, chatId, messageId, getBracketKeyboard());
+  } else {
+    await bot.sendMessage(chatId, text, {
+      parse_mode: 'HTML',
+      reply_markup: getBracketKeyboard()
+    });
+  }
 }
 
 function escapeHtml(text) {
@@ -145,11 +205,16 @@ bot.onText(/\/setamount(?:\s+(\d+))?/, async (msg, match) => {
   const amount = match[1];
   if (!amount) {
     const cfg = loadConfig();
-    await bot.sendMessage(msg.chat.id, '💰 Current Quantity Filter: <b>' + cfg.referenceAmount + ' DZD</b>\n\nTo update, send: <code>/setamount 50000</code> (or <code>/setamount 0</code> for any quantity)', { parse_mode: 'HTML' });
+    await bot.sendMessage(msg.chat.id, '💰 Current Quantity Filter: <b>' + (cfg.referenceAmount ? cfg.referenceAmount + ' DZD' : 'All Volumes') + '</b>\n\nTo update, send: <code>/setamount 2000</code> (or <code>/setamount 0</code> for any quantity)', { parse_mode: 'HTML' });
     return;
   }
-  updateConfig({ referenceAmount: amount === '0' ? null : String(amount) });
-  await bot.sendMessage(msg.chat.id, '✅ <b>Quantity Filter updated to ' + (amount === '0' ? 'ANY Quantity' : amount + ' DZD') + '</b>\nCompetitor prices will now be evaluated for this specific ticket size.', { parse_mode: 'HTML', reply_markup: getMainMenuKeyboard() });
+  const newAmount = amount === '0' ? null : String(amount);
+  updateConfig({ referenceAmount: newAmount });
+  const cfg = loadConfig();
+  if (cfg.autoRepriceEnabled) {
+    evaluateAndReprice().catch(console.error);
+  }
+  await bot.sendMessage(msg.chat.id, '✅ <b>Quantity Filter updated to ' + (amount === '0' ? 'ALL Volumes' : amount + ' DZD') + '</b>\nCompetitor depth will now be evaluated for this specific ticket size.', { parse_mode: 'HTML', reply_markup: getMainMenuKeyboard() });
 });
 
 // /setprice <price> (updates targeted ad price immediately)
@@ -171,7 +236,11 @@ bot.onText(/\/setprice(?:\s+(\d+(?:\.\d+)?))?/, async (msg, match) => {
     if (res.ret_code === 0 || res.retCode === 0) {
       await bot.sendMessage(msg.chat.id, '✅ <b>Ad #' + cfg.targetAdId + ' successfully repriced to ' + num.toFixed(2) + ' DZD!</b>', { parse_mode: 'HTML', reply_markup: getMainMenuKeyboard() });
     } else {
-      await bot.sendMessage(msg.chat.id, '❌ Failed to update price: ' + (res.ret_msg || res.retMsg), { parse_mode: 'HTML' });
+      let errText = res.ret_msg || res.retMsg || 'Unknown Bybit error';
+      if (res.ret_code === 912120024) {
+        errText = 'Insufficient Available USDT in your Funding Account. Please transfer USDT into your Bybit Funding Account first.';
+      }
+      await bot.sendMessage(msg.chat.id, '❌ <b>Failed to update price:</b>\n' + escapeHtml(errText), { parse_mode: 'HTML' });
     }
   } catch (err) {
     await bot.sendMessage(msg.chat.id, '❌ Error: ' + escapeHtml(err.message), { parse_mode: 'HTML' });
@@ -330,9 +399,28 @@ export async function handleMarketDepth(chatId, messageId = null) {
   try {
     const cfg = loadConfig();
     const depthRes = await Bybit.getOnlineAds('DZD', 'USDT', '1', '1', '6', cfg.referenceAmount);
+    
+    // Check if Bybit returned rate limit cooldown
+    if (depthRes?.ret_code === 10006 || depthRes?.retCode === 10006) {
+      const waitText = '⚠️ <b>Bybit Rate Limit Cooldown</b>\n━━━━━━━━━━━━━━━━━━━━\n<i>Bybit P2P rate limit reached. Please wait ~10-15 seconds before refreshing depth.</i>';
+      const waitMarkup = {
+        inline_keyboard: [
+          [{ text: '🔄 Try Refresh Again', callback_data: 'btn_depth' }],
+          [{ text: '🔙 Main Menu', callback_data: 'btn_menu' }]
+        ]
+      };
+      if (messageId) {
+        await safeEditMessage(waitText, chatId, messageId, waitMarkup);
+      } else {
+        await bot.sendMessage(chatId, waitText, { parse_mode: 'HTML', reply_markup: waitMarkup });
+      }
+      return;
+    }
+
     const items = depthRes.result?.items || [];
 
-    let text = '📈 <b>BYBIT DZD SELL ADS (Depth: ' + (cfg.referenceAmount ? cfg.referenceAmount + ' DZD' : 'All') + ')</b>\n━━━━━━━━━━━━━━━━━━━━\n';
+    const bracketDesc = cfg.referenceAmount ? `${cfg.referenceAmount} DZD` : 'All Volumes';
+    let text = '📈 <b>BYBIT DZD SELL ADS (Bracket: ' + bracketDesc + ')</b>\n━━━━━━━━━━━━━━━━━━━━\n';
     if (items.length === 0) {
       text += '<i>No online sell ads found for this quantity.</i>\n';
     } else {
@@ -342,12 +430,24 @@ export async function handleMarketDepth(chatId, messageId = null) {
     }
     text += '━━━━━━━━━━━━━━━━━━━━\n<i>Updated at: ' + new Date().toLocaleTimeString() + '</i>';
 
+    const markup = {
+      inline_keyboard: [
+        [
+          { text: '🔄 Refresh Depth', callback_data: 'btn_depth' },
+          { text: '💰 Change Bracket', callback_data: 'btn_brackets_menu' }
+        ],
+        [
+          { text: '🔙 Main Menu', callback_data: 'btn_menu' }
+        ]
+      ]
+    };
+
     if (messageId) {
-      await safeEditMessage(text, chatId, messageId, getMainMenuKeyboard());
+      await safeEditMessage(text, chatId, messageId, markup);
     } else {
       await bot.sendMessage(chatId, text, {
         parse_mode: 'HTML',
-        reply_markup: getMainMenuKeyboard()
+        reply_markup: markup
       });
     }
   } catch (err) {
@@ -385,6 +485,23 @@ bot.on('callback_query', async (query) => {
     await handleMarketDepth(chatId, messageId);
   } else if (data === 'btn_pricing_info') {
     await handlePricingReport(chatId, messageId);
+  } else if (data === 'btn_brackets_menu') {
+    await handleBracketMenu(chatId, messageId);
+  } else if (data.startsWith('set_bracket_')) {
+    const val = data.replace('set_bracket_', '');
+    const amountVal = val === '0' ? null : val;
+    updateConfig({ referenceAmount: amountVal });
+    
+    const displayStr = amountVal ? `${amountVal} DZD` : 'All Volumes';
+    try {
+      await bot.answerCallbackQuery(query.id, { text: `🎯 Bracket set to ${displayStr}` });
+    } catch (e) {}
+    
+    const cfg = loadConfig();
+    if (cfg.autoRepriceEnabled) {
+      evaluateAndReprice().catch(console.error);
+    }
+    await handleBracketMenu(chatId, messageId);
   } else if (data === 'btn_toggle_autoprice') {
     const cfg = loadConfig();
     const newState = !cfg.autoRepriceEnabled;
@@ -420,7 +537,11 @@ bot.on('callback_query', async (query) => {
       if (res.ret_code === 0 || res.retCode === 0) {
         await handleAdsList(chatId, messageId);
       } else {
-        await bot.sendMessage(chatId, '❌ Failed to resume ad: ' + (res.ret_msg || res.retMsg));
+        let msg = res.ret_msg || res.retMsg || 'Unknown error';
+        if (res.ret_code === 912120024) {
+          msg = 'Insufficient Available USDT in your Funding Account. Please transfer USDT into your Bybit Funding Account to activate this ad.';
+        }
+        await bot.sendMessage(chatId, '❌ <b>Failed to resume ad #' + adId + ':</b>\n' + escapeHtml(msg), { parse_mode: 'HTML' });
       }
     } catch (err) {
       await bot.sendMessage(chatId, '❌ Error: ' + escapeHtml(err.message));

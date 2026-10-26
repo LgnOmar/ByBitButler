@@ -33,7 +33,7 @@ async function postRequest(endpoint, params = {}) {
   try {
     const response = await axios.post(`${BASE_URL}${endpoint}`, bodyString, {
       headers,
-      timeout: 10000
+      timeout: 15000
     });
     return response.data;
   } catch (err) {
@@ -67,12 +67,60 @@ export const Bybit = {
     });
   },
 
-  // Update ad price
-  async updateAdPrice(itemId, price) {
-    return postRequest('/v5/p2p/item/update', {
-      itemId: String(itemId),
-      price: String(Number(price).toFixed(2))
-    });
+  // Alias for getOnlineAds for backward compatibility
+  async getMarketDepth(currencyId = 'DZD', tokenId = 'USDT', side = '1', size = 10, amount = null) {
+    return this.getOnlineAds(currencyId, tokenId, side, '1', String(size), amount);
+  },
+
+  // Update ad price with full payload reconstruction
+  async updateAdPrice(adId, price, existingAd = null) {
+    let ad = existingAd;
+    if (!ad) {
+      const myAdsRes = await this.getMyAds('DZD', 'USDT');
+      ad = myAdsRes.result?.items?.find(a => String(a.id) === String(adId) || String(a.itemId) === String(adId));
+    }
+    if (!ad) {
+      throw new Error(`Ad #${adId} not found in personal ads.`);
+    }
+
+    const isOnline = ad.status === 10 || ad.showStatus === 'ONLINE' || ad.isOnline === true;
+    const actionType = isOnline ? 'MODIFY' : 'ACTIVE';
+
+    const termIds = Array.isArray(ad.paymentTerms) && ad.paymentTerms.length > 0
+      ? ad.paymentTerms.map(p => String(p.id))
+      : (Array.isArray(ad.payments) && ad.payments.length > 0 ? ad.payments.map(String) : ["152"]);
+
+    const payload = {
+      id: String(ad.id || adId),
+      actionType,
+      priceType: String(ad.priceType ?? '0'),
+      premium: String(ad.premium || '0'),
+      price: String(Number(price).toFixed(2)),
+      minAmount: String(ad.minAmount),
+      maxAmount: String(ad.maxAmount),
+      quantity: String(ad.quantity),
+      paymentPeriod: String(ad.paymentPeriod || '15'),
+      paymentIds: termIds,
+      remark: ad.remark || '',
+      tradingPreferenceSet: ad.tradingPreferenceSet || {
+        hasUnPostAd: 0,
+        isKyc: 1,
+        isEmail: 1,
+        isMobile: 1,
+        hasRegisterTime: 0,
+        registerTimeThreshold: 0,
+        orderFinishNumberDay30: 0,
+        completeRateDay30: "",
+        nationalLimit: "DZA",
+        hasOrderFinishNumberDay30: 0,
+        hasCompleteRateDay30: 0,
+        hasNationalLimit: 1,
+        hasSingleUserOrderLimit: 0,
+        singleUserOrderLimit: 0
+      }
+    };
+
+    return postRequest('/v5/p2p/item/update', payload);
   },
 
   // Pause / Take ad offline
@@ -82,12 +130,52 @@ export const Bybit = {
     });
   },
 
-  // Resume / Bring ad online
-  async relistAd(itemId) {
-    return postRequest('/v5/p2p/item/update', {
-      itemId: String(itemId),
-      status: 10
-    });
+  // Resume / Bring ad online with full payload reconstruction (actionType: 'ACTIVE')
+  async relistAd(adId, existingAd = null) {
+    let ad = existingAd;
+    if (!ad) {
+      const myAdsRes = await this.getMyAds('DZD', 'USDT');
+      ad = myAdsRes.result?.items?.find(a => String(a.id) === String(adId) || String(a.itemId) === String(adId));
+    }
+    if (!ad) {
+      throw new Error(`Ad #${adId} not found in personal ads.`);
+    }
+
+    const termIds = Array.isArray(ad.paymentTerms) && ad.paymentTerms.length > 0
+      ? ad.paymentTerms.map(p => String(p.id))
+      : (Array.isArray(ad.payments) && ad.payments.length > 0 ? ad.payments.map(String) : ["152"]);
+
+    const payload = {
+      id: String(ad.id || adId),
+      actionType: 'ACTIVE',
+      priceType: String(ad.priceType ?? '0'),
+      premium: String(ad.premium || '0'),
+      price: String(ad.price),
+      minAmount: String(ad.minAmount),
+      maxAmount: String(ad.maxAmount),
+      quantity: String(ad.quantity),
+      paymentPeriod: String(ad.paymentPeriod || '15'),
+      paymentIds: termIds,
+      remark: ad.remark || '',
+      tradingPreferenceSet: ad.tradingPreferenceSet || {
+        hasUnPostAd: 0,
+        isKyc: 1,
+        isEmail: 1,
+        isMobile: 1,
+        hasRegisterTime: 0,
+        registerTimeThreshold: 0,
+        orderFinishNumberDay30: 0,
+        completeRateDay30: "",
+        nationalLimit: "DZA",
+        hasOrderFinishNumberDay30: 0,
+        hasCompleteRateDay30: 0,
+        hasNationalLimit: 1,
+        hasSingleUserOrderLimit: 0,
+        singleUserOrderLimit: 0
+      }
+    };
+
+    return postRequest('/v5/p2p/item/update', payload);
   },
 
   // Query pending active orders

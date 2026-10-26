@@ -15,28 +15,43 @@ async function runDiagnostics() {
   console.log('🔑 API Key:', process.env.BYBIT_API_KEY.substring(0, 6) + '...' + process.env.BYBIT_API_KEY.slice(-4));
   console.log('📡 Testing Bybit V5 Connection...');
 
-  // 1. Test Funding Balance
+  // Detect current public IP
+  let publicIp = 'Unknown';
   try {
-    console.log('\n[1/3] Querying Funding Wallet Balance (USDT)...');
-    const balanceRes = await Bybit.getFundingBalance('USDT');
-    if (balanceRes && balanceRes.retCode === 0) {
-      const balanceList = balanceRes.result?.balance || [];
-      const usdt = balanceList.find(b => b.coin === 'USDT') || { walletBalance: '0', transferBalance: '0' };
-      console.log('✅ Funding Balance Retrieved Successfully:');
-      console.log('   - Total USDT:', usdt.walletBalance);
-      console.log('   - Available USDT:', usdt.transferBalance);
+    const ipRes = await fetch('https://api.ipify.org?format=json').then(r => r.json());
+    publicIp = ipRes.ip || 'Unknown';
+    console.log('🌐 Current Outbound IP:', publicIp);
+  } catch (e) {}
+
+  // 1. Test Personal Ads (P2P Merchant API Access)
+  try {
+    console.log('\n[1/3] Querying Personal Bybit Ads (getMyAds)...');
+    const myAdsRes = await Bybit.getMyAds('DZD', 'USDT');
+    if (myAdsRes && (myAdsRes.retCode === 0 || myAdsRes.ret_code === 0)) {
+      const items = myAdsRes.result?.items || [];
+      console.log(`✅ Success! Found ${items.length} personal ads on your Bybit account.`);
+      items.forEach((ad, i) => {
+        console.log(`   #${i + 1} | Ad ID: ${ad.id} | Price: ${ad.price} DZD | Status: ${ad.status === 10 ? 'ONLINE 🟢' : 'OFFLINE 🔴'} | Limits: ${ad.minAmount}-${ad.maxAmount} DZD`);
+      });
     } else {
-      console.log('⚠️ Balance response:', balanceRes);
+      console.log('⚠️ Personal Ads response:', myAdsRes);
+      if (myAdsRes?.ret_code === 10010 || myAdsRes?.retCode === 10010) {
+        console.log('\n⛔ IP WHITELIST NOTICE: Bybit rejected request (Code 10010: Unmatched IP).');
+        console.log(`👉 Please whitelist IP ${publicIp} in your Bybit API settings.`);
+      }
     }
   } catch (err) {
-    console.error('❌ Balance Query Failed:', err.message);
+    console.error('❌ Personal Ads Query Failed:', err.message);
+    if (err.message.includes('Unmatched IP')) {
+      console.log(`👉 Please whitelist IP ${publicIp} in your Bybit API settings.`);
+    }
   }
 
-  // 2. Test DZD Market Depth (Sell Ads)
+  // 2. Test DZD Market Depth (Public Orderbook)
   try {
     console.log('\n[2/3] Querying Bybit DZD P2P Orderbook (Top Sell Ads)...');
     const depthRes = await Bybit.getMarketDepth('DZD', 'USDT', '1', 5);
-    if (depthRes && depthRes.retCode === 0) {
+    if (depthRes && (depthRes.retCode === 0 || depthRes.ret_code === 0)) {
       const items = depthRes.result?.items || [];
       console.log(`✅ Found ${items.length} Online Sell Ads in DZD:`);
       items.forEach((item, idx) => {
@@ -53,7 +68,7 @@ async function runDiagnostics() {
   try {
     console.log('\n[3/3] Querying Pending P2P Orders...');
     const ordersRes = await Bybit.getPendingOrders();
-    if (ordersRes && ordersRes.retCode === 0) {
+    if (ordersRes && (ordersRes.retCode === 0 || ordersRes.ret_code === 0)) {
       const orderList = ordersRes.result?.orderList || ordersRes.result?.items || [];
       console.log(`✅ Query Succeeded! Active Pending Orders: ${orderList.length}`);
     } else {
