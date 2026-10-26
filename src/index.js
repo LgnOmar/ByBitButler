@@ -1,3 +1,4 @@
+import './logger.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import axios from 'axios';

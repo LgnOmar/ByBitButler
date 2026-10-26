@@ -101,23 +101,7 @@ export const Bybit = {
       quantity: String(ad.quantity),
       paymentPeriod: String(ad.paymentPeriod || '15'),
       paymentIds: termIds,
-      remark: ad.remark || '',
-      tradingPreferenceSet: ad.tradingPreferenceSet || {
-        hasUnPostAd: 0,
-        isKyc: 1,
-        isEmail: 1,
-        isMobile: 1,
-        hasRegisterTime: 0,
-        registerTimeThreshold: 0,
-        orderFinishNumberDay30: 0,
-        completeRateDay30: "",
-        nationalLimit: "DZA",
-        hasOrderFinishNumberDay30: 0,
-        hasCompleteRateDay30: 0,
-        hasNationalLimit: 1,
-        hasSingleUserOrderLimit: 0,
-        singleUserOrderLimit: 0
-      }
+      remark: ad.remark || ''
     };
 
     return postRequest('/v5/p2p/item/update', payload);
@@ -156,23 +140,7 @@ export const Bybit = {
       quantity: String(ad.quantity),
       paymentPeriod: String(ad.paymentPeriod || '15'),
       paymentIds: termIds,
-      remark: ad.remark || '',
-      tradingPreferenceSet: ad.tradingPreferenceSet || {
-        hasUnPostAd: 0,
-        isKyc: 1,
-        isEmail: 1,
-        isMobile: 1,
-        hasRegisterTime: 0,
-        registerTimeThreshold: 0,
-        orderFinishNumberDay30: 0,
-        completeRateDay30: "",
-        nationalLimit: "DZA",
-        hasOrderFinishNumberDay30: 0,
-        hasCompleteRateDay30: 0,
-        hasNationalLimit: 1,
-        hasSingleUserOrderLimit: 0,
-        singleUserOrderLimit: 0
-      }
+      remark: ad.remark || ''
     };
 
     return postRequest('/v5/p2p/item/update', payload);
